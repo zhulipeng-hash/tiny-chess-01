@@ -42,12 +42,15 @@ ep=-1
 tt={}
 nodes=0
 stop=False
-LIMIT=200000
+LIMIT=250000
 INF=10**7
 MATE=10**6
 KIL=[[0,0]for _ in range(64)]
+PTH=[0]*128
+HIS=[]
+hm=0
 def init(fen):
-	global B,side,cast,ep,ph
+	global B,side,cast,ep,ph,hm
 	p=fen.split()
 	B=[0]*64
 	for i,row in enumerate(p[0].split("/")):
@@ -66,6 +69,7 @@ def init(fen):
 	if "q" in p[2]:cast|=8
 	ep=-1 if p[3]=="-" else(ord(p[3][0])-97)+(int(p[3][1])-1)*8
 	ph=sum(PH[abs(p)]for p in B)
+	hm=int(p[4])if len(p)>4 else 0
 def att(s,by):
 	b=B
 	for t in(s-8*by-1,s-8*by+1):
@@ -145,7 +149,7 @@ def gen(caps=False):
 						break
 	return ms
 def mk(m):
-	global side,ep,cast,ph
+	global side,ep,cast,ph,hm
 	f=m&63
 	t=m>>6&63
 	pr=m>>12
@@ -157,6 +161,11 @@ def mk(m):
 	if abs(p)==1 and t==ep and cap==0:
 		cap=-side
 		b[t-8*side]=0
+	ohm=hm
+	if abs(p)==1 or cap:
+		hm=0
+	else:
+		hm+=1
 	b[t]=side*(pr+1)if pr else p
 	if pr:
 		ph+=PH[pr+1]
@@ -173,10 +182,10 @@ def mk(m):
 	oep=ep
 	ep=f+8*side if abs(p)==1 and abs(t-f)==16 else-1
 	side=-side
-	return(f,t,p,cap,old,oep)
+	return(f,t,p,cap,old,oep,ohm)
 def um(m,u):
-	global side,ep,cast,ph
-	f,t,p,cap,old,oep=u
+	global side,ep,cast,ph,hm
+	f,t,p,cap,old,oep,ohm=u
 	side=-side
 	b=B
 	if m>>12:
@@ -198,6 +207,7 @@ def um(m,u):
 			b[t+1]=0
 	cast=old
 	ep=oep
+	hm=ohm
 def key():
 	return hash((tuple(B),side,cast,ep))
 def ev():
@@ -240,6 +250,8 @@ def qs(a,b,ply):
 	if nodes>=LIMIT:
 		stop=True
 		return 0
+	if hm>=100:
+		return 0
 	us=side
 	chk=att(B.index(6*us),-us)
 	best=-MATE
@@ -276,10 +288,15 @@ def nega(d,a,b,ply):
 		stop=True
 		return 0
 	k=key()
+	if hm>=100 or k in HIS or k in PTH[:ply]:
+		return 0
+	PTH[ply]=k
 	e=tt.get(k)
 	tm=0
 	if e:
 		d0,fl,sc,tm=e
+		if sc>MATE-1000:sc-=ply
+		elif sc<-MATE+1000:sc+=ply
 		if d0>=d:
 			if fl==0:
 				return sc
@@ -316,7 +333,7 @@ def nega(d,a,b,ply):
 		if first:
 			v=-nega(d-1,-b,-a,ply+1)
 		else:
-			red=1 if d>=3 and not(m>>12)and not B[m>>6&63]else 0
+			red=1 if d>=3 and not chk and not(m>>12)and not B[m>>6&63]else 0
 			v=-nega(d-1-red,-a-1,-a,ply+1)
 			if a<v and(red or v<b)and not stop:
 				v=-nega(d-1,-b,-a,ply+1)
@@ -339,11 +356,15 @@ def nega(d,a,b,ply):
 	if best==-MATE:
 		return-MATE+ply if chk else 0
 	fl=0 if best>a0 and best<b else(1 if best>=b else 2)
-	tt[k]=(d,fl,best,bm)
+	s=best
+	if s>MATE-1000:s+=ply
+	elif s<-MATE+1000:s-=ply
+	tt[k]=(d,fl,s,bm)
 	return best
 def root(d,ms):
 	global stop
 	k=key()
+	PTH[0]=k
 	e=tt.get(k)
 	order(ms,e[3]if e else 0,0)
 	a=-INF
@@ -384,6 +405,7 @@ def uci(m):
 def choose(fen,legal):
 	global nodes,stop
 	init(fen)
+	HIS.append(key())
 	tt.clear()
 	for x in KIL:
 		x[0]=x[1]=0
@@ -392,7 +414,7 @@ def choose(fen,legal):
 	nodes=0
 	ms=[enc(u)for u in legal]
 	best=ms[0]
-	for d in range(1,8):
+	for d in range(1,40):
 		stop=False
 		r=root(d,ms)
 		if stop or r is None:
@@ -410,5 +432,6 @@ if __name__=="__main__":
 		g=post("/game",{})
 		if g["status"]=="done":
 			break
+		HIS.clear()
 		while g["status"]=="your_move":
 			g=post("/move",{"game":g["game"],"move":choose(g["fen"],g["legal_moves"])})
